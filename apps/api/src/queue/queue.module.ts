@@ -28,7 +28,9 @@ export const queueConnectionFactory = (
     BullModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: queueConnectionFactory,
+      useFactory: (config: ConfigService<AppConfiguration, true>) => ({
+        connection: queueConnectionFactory(config),
+      }),
     }),
     BullModule.registerQueue({
       name: ANALYSIS_QUEUE,
