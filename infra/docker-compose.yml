@@ -169,6 +169,9 @@ services:
 
   worker:
     image: veriframe-api:local
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
     restart: unless-stopped
     command: ["node", "dist/worker.js"]
     environment:
