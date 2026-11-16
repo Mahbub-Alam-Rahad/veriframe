@@ -3,7 +3,7 @@ import { Injectable } from "@nestjs/common";
 import { Plan } from "@prisma/client";
 import { Queue } from "bullmq";
 import { randomUUID } from "node:crypto";
-import { ANALYSIS_QUEUE } from "./queue.module";
+import { ANALYSIS_QUEUE } from "./queue.constants";
 
 export interface AnalysisJob {
   videoId: string;

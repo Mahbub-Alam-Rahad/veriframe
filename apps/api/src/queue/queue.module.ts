@@ -2,9 +2,8 @@ import { BullModule } from "@nestjs/bullmq";
 import { Global, Module } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import type { AppConfiguration } from "../config/configuration";
+import { ANALYSIS_QUEUE } from "./queue.constants";
 import { QueueService } from "./queue.service";
-
-export const ANALYSIS_QUEUE = "analysis";
 
 export const queueConnectionFactory = (
   config: ConfigService<AppConfiguration, true>,

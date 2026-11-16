@@ -3,10 +3,11 @@ import "./config/load-env";
 import { Logger, ValidationPipe } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { NestFactory } from "@nestjs/core";
+import type { NestExpressApplication } from "@nestjs/platform-express";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import cookieParser from "cookie-parser";
-import express from "express";
 import helmet from "helmet";
+import type { NextFunction, Request, Response } from "express";
 import { AppModule } from "./app.module";
 import type { AppConfiguration } from "./config/configuration";
 import { validateEnvironment } from "./config/configuration";
@@ -14,7 +15,7 @@ import { validateEnvironment } from "./config/configuration";
 async function bootstrap(): Promise<void> {
   validateEnvironment();
 
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
   const config = app.get(ConfigService<AppConfiguration, true>);
   const logger = new Logger("Bootstrap");
   const isProduction = config.get("isProduction", { infer: true });
@@ -27,10 +28,10 @@ async function bootstrap(): Promise<void> {
     }),
   );
   app.use(cookieParser());
-  app.use(express.json({ limit: "2mb" }));
-  app.use(express.urlencoded({ extended: true, limit: "2mb" }));
+  app.useBodyParser("json", { limit: "2mb" });
+  app.useBodyParser("urlencoded", { limit: "2mb", extended: true });
   app.setGlobalPrefix("api/v1");
-  app.getHttpAdapter().getInstance().set("trust proxy", config.get("trustProxy", { infer: true }));
+  app.set("trust proxy", config.get("trustProxy", { infer: true }));
   app.enableCors({
     origin: config.get("webOrigin", { infer: true }),
     credentials: true,
@@ -51,7 +52,7 @@ async function bootstrap(): Promise<void> {
 
   // Cookie-authenticated unsafe requests must originate from an allowed web origin.
   const allowedOrigins = new Set(config.get("webOrigin", { infer: true }));
-  app.use((request: express.Request, response: express.Response, next: express.NextFunction) => {
+  app.use((request: Request, response: Response, next: NextFunction) => {
     if (["GET", "HEAD", "OPTIONS"].includes(request.method)) return next();
     const origin = request.header("origin");
     const apiKey = request.header("x-api-key");

@@ -6,7 +6,7 @@ import { getPlan } from "../config/plans";
 import { MlService } from "../ml/ml.service";
 import { PrismaService } from "../prisma/prisma.service";
 import type { AnalysisJob } from "../queue/queue.service";
-import { ANALYSIS_QUEUE } from "../queue/queue.module";
+import { ANALYSIS_QUEUE } from "../queue/queue.constants";
 
 @Processor(ANALYSIS_QUEUE, { concurrency: Number(process.env.WORKER_CONCURRENCY ?? 2) })
 export class AnalysisProcessor extends WorkerHost {
