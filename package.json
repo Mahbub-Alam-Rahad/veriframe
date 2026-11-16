@@ -1,0 +1,30 @@
+{
+  "name": "deepfake-detection",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Self-hosted deepfake detection platform: Next.js, NestJS, FastAPI, PostgreSQL, Redis and MinIO.",
+  "license": "MIT",
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=20.11.0",
+    "pnpm": ">=9.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @deepfake/web --filter @deepfake/api dev",
+    "dev:web": "pnpm --filter @deepfake/web dev",
+    "dev:api": "pnpm --filter @deepfake/api dev",
+    "build": "pnpm -r --if-present build",
+    "lint": "pnpm -r --if-present lint",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml,css}\" --ignore-path .gitignore",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml,css}\" --ignore-path .gitignore",
+    "db:generate": "pnpm --filter @deepfake/api prisma:generate",
+    "db:migrate": "pnpm --filter @deepfake/api prisma:migrate",
+    "db:deploy": "pnpm --filter @deepfake/api prisma:deploy",
+    "db:seed": "pnpm --filter @deepfake/api prisma:seed"
+  },
+  "devDependencies": {
+    "prettier": "3.4.2"
+  }
+}

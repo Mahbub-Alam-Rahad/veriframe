@@ -1,0 +1,36 @@
+{
+	email {$ACME_EMAIL:internal@localhost}
+	admin off
+}
+
+# Local default is plain HTTP on port 3000: http://localhost:3000
+# For a public deployment set SITE_ADDRESS to a DNS name (for example
+# detect.example.com). Caddy will then obtain and renew a Let's Encrypt
+# certificate automatically, provided ports 80 and 443 are reachable.
+{$SITE_ADDRESS:http://localhost:3000} {
+	encode zstd gzip
+
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+	}
+
+	# API traffic goes straight to NestJS. The Next.js rewrite remains for
+	# local development and server-side rendering.
+	handle /api/* {
+		reverse_proxy api:3001
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

@@ -1,0 +1,34 @@
+# Example training configuration. Scripts accept CLI flags that override these values.
+
+seed: 42
+
+data:
+  train_dir: data/crops/train
+  val_dir: data/crops/val
+  test_dir: data/crops/test
+  image_size: 224
+
+model:
+  base_model: dima806/deepfake_vs_real_image_detection
+  # Label order must match inference. Verify with the model card/config.
+  id2label:
+    0: real
+    1: fake
+
+training:
+  output_dir: ../models/veriframe-finetuned
+  epochs: 3
+  batch_size: 16
+  learning_rate: 5.0e-5
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  fp16: false
+
+evaluation:
+  report: ../models/veriframe-finetuned/eval.json
+  calibration_bins: 10
+
+mlflow:
+  enabled: false
+  tracking_uri: http://127.0.0.1:5000
+  experiment: veriframe

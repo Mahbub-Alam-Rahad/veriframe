@@ -1,0 +1,902 @@
+Deepfake Detection Web App: Complete Beginner Build Guide
+
+
+
+
+  Deepfake Detection Web App: Complete
+  Beginner Build Guide
+  By Rahad. A step-by-step plan to build an open-source web app that analyzes a video and
+  gives it an AI-generated / fake score. Later phases add image and fake-information
+  detection.
+
+
+  1. What You Are Building
+  A user uploads a video. The app extracts frames and audio, runs them through trained
+  detection models, and returns a Fake Score from 0 to 100 plus an explanation (which
+  frames looked suspicious, confidence, and so on). Around this core you build a normal
+  SaaS product: landing page, pricing, login, dashboard, admin panel.
+
+  Important honesty note: deepfake detection is an arms race. No detector is 100%
+  accurate, and models trained on old datasets often fail on new generators (Sora-style,
+  Veo, Kling, etc.). Always present the result as a probability, never as proof. Plan to retrain
+  regularly.
+
+
+  Decisions for This Build
+
+     Decision                            Choice
+
+     Model approach                      Download a pretrained Hugging Face model first;
+                                         fine-tune your own later only if needed
+
+     Where models run                    Locally on your own machine; the Hugging Face
+                                         hosted API is not used for user videos
+
+     Training (if needed)                Kaggle or Colab free GPU, then download the
+                                         model files
+
+     Model swapping                      One predict() interface, model name in config,
+                                         model version saved with every result
+
+     Your hardware                       Kali Linux, 12 GB RAM, 8-core i5 (8th gen), MX110
+                                         with 2 GB VRAM: web app and CPU scoring locally,
+                                         no training
+
+     Stack                               Next.js, NestJS, FastAPI, PostgreSQL, Redis, MinIO,
+                                         Docker
+
+
+
+
+                                                                                               Page 1 of 19
+Deepfake Detection Web App: Complete Beginner Build Guide
+
+
+
+
+     Decision                            Choice
+
+     Autocoding                          OpenCode
+
+
+
+
+  2. Core Concepts in Plain English
+         Model: a program that learned patterns from examples. Here it learns what real vs
+         fake videos look like.
+         Dataset: a large collection of labeled examples (video + label real/fake).
+         Training: showing the model many examples so it adjusts itself to tell them apart.
+         Fine-tuning: starting from a model someone already trained and teaching it your
+         specific task. This is what you will do. It is far cheaper than training from zero.
+         Inference: using the trained model to score a new video.
+         Metrics: accuracy, precision, recall, F1, AUC. For detection, AUC and recall on fake
+         videos matter most.
+         LLM vs classifier: you said "train an LLM", but for deepfake detection you mostly
+         need vision models (image/video classifiers), not a chat LLM. An LLM (open-source,
+         like Llama or Qwen) is useful later for explaining results and for the fake-information
+         (text) detector.
+
+
+  3. Final Architecture
+     Browser (React + Next.js)
+         | HTTPS
+     Node.js API (NestJS or Express) -- auth, users, billing, admin, uploads
+         | queue job
+     Redis + BullMQ (job queue)
+         |
+     Python ML Worker (FastAPI + PyTorch) -- frame extraction, model inference,
+     scoring
+         |
+     PostgreSQL (data)   MinIO (video storage)
+
+
+  Why two backends? Node is excellent for web/auth/business logic. Python is where all AI
+  libraries live. They talk through a queue so long video analysis never blocks the website.
+
+
+
+
+                                                                                               Page 2 of 19
+Deepfake Detection Web App: Complete Beginner Build Guide
+
+
+
+
+  4. 100% Open-Source Tech Stack
+
+     Layer                                 Tool
+
+     Frontend                              Next.js (React), TypeScript, Tailwind CSS,
+                                           shadcn/ui
+
+     API backend                           Node.js + NestJS (or Express)
+
+     ML service                            Python 3.11, FastAPI, PyTorch, Hugging Face
+                                           Transformers, OpenCV, FFmpeg
+
+     Database                              PostgreSQL + Prisma ORM
+
+     Queue                                 Redis + BullMQ
+
+     File storage                          MinIO (open-source S3 clone)
+
+     Auth                                  Auth.js (NextAuth) or Keycloak (heavier,
+                                           enterprise-grade)
+
+     Payments                              Stripe is not open source; use open options like
+                                           Lago (billing) or simply a manual/"contact sales"
+                                           flow at first
+
+     Experiment tracking                   MLflow
+
+     Containers                            Docker + Docker Compose
+
+     Reverse proxy                         Nginx or Caddy
+
+     Monitoring                            Prometheus + Grafana, Sentry (self-hosted)
+
+     CI/CD                                 GitHub Actions or Gitea + Woodpecker
+
+     Autocoding                            OpenCode (what you already have)
+
+
+
+
+  5. Your Hardware: What Runs Where
+  Your machine (Kali Linux, 12 GB RAM, 8-core Intel i5 8th gen, NVIDIA MX110 with 2 GB
+  VRAM) is enough to build the whole product and score videos with a pretrained detector
+  on CPU. It is not enough to train models.
+
+
+
+
+                                                                                               Page 3 of 19
+Deepfake Detection Web App: Complete Beginner Build Guide
+
+
+
+
+     Task                                           Where it runs                Why
+
+     Website, API, database,                        Your laptop (Docker)         Light on RAM and CPU
+     queue
+
+     Frame and face extraction                      Your laptop CPU, overnight   No GPU needed
+                                                    if needed
+
+     Scoring a video with a                         Your laptop CPU              Fraction of a second per frame;
+     pretrained model                                                            keep videos short at first
+
+     Fine-tuning a model (only                      Kaggle or Colab free GPU     2 GB VRAM is too small; the
+     if needed)                                                                  MX110 is an old Maxwell-
+                                                                                 generation chip that recent
+                                                                                 PyTorch builds may not
+                                                                                 support
+
+     Local LLM for                                  Skip, or a 1 to 3 billion    RAM and speed limits
+     explanations                                   parameter model on CPU
+
+     Production                                     Rented VPS; GPU server       Later
+                                                    only if needed
+
+
+  Tips for 12 GB RAM and a small GPU:
+
+         Start only the Docker services you need now (web, api, postgres, redis, ml). Add
+         MinIO and MLflow later.
+         Analyze one frame per second and cap uploads at 30 to 60 seconds during
+         development.
+         Use small batch sizes and smaller models (EfficientNet-B0 or B2 before B4).
+         With the pretrained-first plan you do not need terabytes of datasets: a benchmark set
+         of about 100 videos is enough to start.
+         Kaggle gives roughly 30 free GPU hours a week. If you outgrow it, renting a 24 GB GPU
+         on Vast.ai or RunPod costs roughly $0.20 to $0.50 per hour (approximate; check
+         current prices).
+
+
+  6. Project Phases Overview
+     1. Setup and learning basics (week 1)
+     2. Project skeleton with OpenCode (weeks 1 to 2)
+
+
+
+                                                                                                            Page 4 of 19
+Deepfake Detection Web App: Complete Beginner Build Guide
+
+
+
+
+     3. Website and enterprise pages (weeks 2 to 4)
+     4. Auth, roles, admin panel (weeks 2 to 5)
+     5. Choose a pretrained Hugging Face detector and build a benchmark set (week 1, finish
+         week 6)
+     6. ML inference service (week 6)
+     7. Connect everything (week 7)
+     8. Calibration, testing, security, deployment (weeks 8 to 9)
+     9. Optional: fine-tune your own model on Kaggle or Colab and swap it in (week 10
+         onward)
+   10. Later phases: image and fake-information detection
+
+
+  7. Phase 1: Setup
+
+  7.1 Install tools
+     1. Git, Docker Desktop (or Docker Engine), Node.js 20 LTS, pnpm, Python 3.11, FFmpeg.
+     2. VS Code (or VSCodium, the fully open version).
+     3. NVIDIA drivers + CUDA if you have a GPU.
+     4. Create a GitHub (or self-hosted Gitea) repository.
+
+  Kali Linux notes for this project:
+
+         Work as a normal user, not root, and add your user to the docker group.
+         Install Docker from the Kali repositories ( docker.io and the compose plugin).
+         Use pyenv or uv with a virtual environment for Python 3.11. Do not install ML
+         packages into the system Python.
+         Keep Docker volumes and data on a disk with plenty of free space.
+
+
+
+
+                                                                                          Page 5 of 19
+Deepfake Detection Web App: Complete Beginner Build Guide
+
+
+
+
+  7.2 Repository structure (monorepo)
+
+     deepfake-app/
+       apps/
+         web/                              # Next.js frontend
+         api/                              # NestJS backend
+       services/
+         ml/                               # FastAPI + models
+       training/                           # notebooks, scripts, configs
+       infra/                              # docker-compose, nginx
+       docs/
+       AGENTS.md                           # instructions for OpenCode
+
+
+
+  7.3 How to use OpenCode properly
+  OpenCode works best when you give it small, clear tasks and a rules file.
+
+     1. Create AGENTS.md in the repo root describing the stack, folder structure, coding
+         style, and rule: "Make small changes, run tests after each change, never delete files
+         without asking."
+     2. Give one task per prompt, for example: "Create the Prisma schema for users, roles,
+        videos, and analysis results."
+     3. After each task: run the app, read the diff, commit to Git. Never accept huge changes
+         blindly.
+     4. When something breaks, paste the exact error and ask for a fix.
+     5. Free models are weaker than top paid ones, so keep tasks small and review
+        everything, especially security code (login, permissions).
+
+
+
+  8. Phase 2: Website and Enterprise Structure
+  Study how enterprise SaaS sites (Sightengine, Reality Defender, Hive, Sensity) are
+  organized, then build these.
+
+
+  8.1 Public pages
+
+     Page                                                   Contents
+
+     Home                                                   Hero (headline + upload demo), how it works (3
+                                                            steps), features, trust logos, FAQ, call to action
+
+
+
+
+                                                                                                                 Page 6 of 19
+Deepfake Detection Web App: Complete Beginner Build Guide
+
+
+
+
+     Page                                                   Contents
+
+     Product / Features                                     Video detection, accuracy claims (only honest,
+                                                            measured ones), API, reports
+
+     Pricing                                                Free, Pro, Enterprise tiers with usage limits (videos
+                                                            per month, max length)
+
+     Docs / API                                             How developers use your API, API key guide,
+                                                            examples
+
+     About                                                  Mission, team
+
+     Contact                                                Form (name, email, message) saving to database +
+                                                            email notification
+
+     Blog / Resources                                       Optional, good for SEO
+
+     Legal                                                  Privacy Policy, Terms of Service, Cookie notice,
+                                                            Acceptable Use
+
+     Login / Register / Forgot password                     Auth pages
+
+
+
+  8.2 Global components
+         Navbar: logo, Product, Pricing, Docs, Contact, Login, "Get Started" button. Collapses
+         to a hamburger menu on mobile.
+         Footer: links, legal, social, language selector.
+         Dark/light mode toggle, toast notifications, loading skeletons, error pages
+         (404/500), cookie banner.
+
+
+  8.3 User dashboard (after login)
+         Sidebar menu: Dashboard, New Analysis, My Videos, Reports, API Keys, Billing/Plan,
+         Settings.
+         New Analysis: drag-and-drop upload, progress bar, then result page.
+         Result page: Fake Score gauge (0 to 100), verdict label (Likely real / Uncertain / Likely
+         fake), timeline chart of suspicious frames, thumbnail of flagged frames, downloadable
+         PDF report.
+         History: table with search, filter, delete.
+         Settings: profile, password, two-factor authentication, delete account.
+
+
+
+
+                                                                                                                    Page 7 of 19
+Deepfake Detection Web App: Complete Beginner Build Guide
+
+
+
+
+  8.4 Admin panel
+         Overview: total users, videos analyzed, average score, queue length, errors.
+         User management: search, ban/unban, change role, view usage.
+         Analysis management: view all jobs, retry failed, delete content.
+         Plan and limits management.
+         Contact messages inbox.
+         Model management: which model version is active, upload new version, rollback.
+         Audit logs: who did what and when.
+         System health: queue status, worker status, storage use.
+
+
+  9. Phase 3: Authentication and Authorization
+  Authentication = who you are. Authorization = what you may do.
+
+
+  9.1 Authentication features
+         Email + password (hash with Argon2 or bcrypt, never store plain text).
+         Email verification and password reset.
+         Social login (Google, GitHub) via OAuth.
+         Optional two-factor authentication (TOTP apps).
+         Sessions with secure HTTP-only cookies, or short-lived JWT + refresh tokens.
+         Rate limiting on login to block brute-force attacks.
+         API keys for developers (store only the hash).
+
+
+
+
+                                                                                          Page 8 of 19
+Deepfake Detection Web App: Complete Beginner Build Guide
+
+
+
+
+  9.2 Authorization (roles)
+
+     Role                                  Can do
+
+     Guest                                 View public pages, maybe 1 free demo
+
+     User                                  Upload, view own results, manage own API keys
+
+     Pro / Enterprise user                 Higher limits, team features
+
+     Admin                                 Everything in admin panel except dangerous
+                                           system actions
+
+     Super Admin                           Everything including roles and model deployment
+
+
+  Implement RBAC (role-based access control) as middleware/guards in the API. Every
+  endpoint checks the role and ownership (a user must never open another user's video by
+  guessing an ID).
+
+
+  10. Phase 4: Database Design
+  Main tables (Prisma models):
+
+         User: id, email, passwordHash, role, plan, emailVerified, createdAt.
+         Session / Account: auth sessions and OAuth links.
+         ApiKey: id, userId, keyHash, name, lastUsedAt, revokedAt.
+         Video: id, userId, storagePath, originalName, duration, size, status (uploaded, queued,
+         processing, done, failed).
+         Analysis: id, videoId, modelVersion, fakeScore, verdict, details (JSON: per-frame
+         scores, audio score), createdAt.
+         Plan / Subscription / UsageRecord: limits and consumption.
+         ContactMessage: name, email, message, status.
+         AuditLog: actorId, action, target, timestamp, IP.
+         ModelVersion: name, path, metrics, isActive.
+
+
+  11. Phase 5: Backend API (Node)
+  Endpoints (REST, documented with OpenAPI/Swagger):
+
+          POST /auth/register , /auth/login , /auth/logout , /auth/forgot-password
+
+
+
+                                                                                             Page 9 of 19
+Deepfake Detection Web App: Complete Beginner Build Guide
+
+
+
+
+          GET /me , PATCH /me
+          POST /videos (upload to MinIO, create job)
+
+          GET /videos , GET /videos/:id , DELETE /videos/:id
+          GET /analyses/:id , GET /analyses/:id/report.pdf
+
+          POST /api-keys , DELETE /api-keys/:id
+
+          POST /contact
+          GET /admin/stats , /admin/users , /admin/jobs , PATCH /admin/users/:id
+
+  Upload rules: limit file size and length, allow only mp4/mov/webm, scan the real file type
+  (not just the extension), store with random names.
+
+
+  12. Phase 6: Detection Model: Pretrained First, Train Later
+  (Beginner Friendly)
+  This is the part you know nothing about, so go slowly.
+
+
+  12.0 Fast Path: Start With a Pretrained Hugging Face Model
+  Start with a model someone else already trained. Build and finish the whole app around it,
+  then fine-tune your own model later only if the results are not good enough. Sections 12.1
+  to 12.7 describe that later training step.
+
+  How Hugging Face works here:
+
+         A model is just files (weights plus a small config), usually a few hundred MB.
+         The first run of from_pretrained("model-id") or pipeline(...) downloads them
+         to ~/.cache/huggingface . After that everything runs on your own machine, even
+         offline (set HF_HUB_OFFLINE=1 in production).
+         No token is needed for public models. A token is needed only for gated models
+         (accept the license on the model page), private repos, and uploading your own model.
+         Do not use the hosted Inference API for real user videos: frames would be uploaded to
+         a third party, which is a privacy problem and conflicts with the self-hosted goal.
+
+  Steps:
+
+     1. Search the Hub for "deepfake detection" and "AI-generated image detection".
+        Shortlist two or three image-classification models.
+
+
+
+
+                                                                                          Page 10 of 19
+Deepfake Detection Web App: Complete Beginner Build Guide
+
+
+
+
+     2. Check each model card: license (commercial use allowed?), training data, which fakes
+         it was trained on, and the file format. Prefer safetensors files from reputable
+         authors; old pickle-based files can run code when loaded.
+     3. Run face detection first (MediaPipe or RetinaFace), then pass each face crop to the
+         model.
+     4. Build a benchmark of about 100 videos: real ones, compressed ones (WhatsApp,
+        TikTok style), and fakes you generate with open-source tools.
+     5. Compare the shortlisted models on the benchmark. Keep the best, or average the
+        best two (an ensemble). Do not trust the accuracy claimed on the model card.
+     6. Combine frame scores into the video score (section 12.6) and calibrate on your
+         benchmark.
+
+     from transformers import pipeline
+
+
+     detector = pipeline("image-classification", model="MODEL_ID_FROM_HUB",
+     device=-1) # -1 = CPU
+     result = detector("face_crop.jpg")                     # e.g. [{'label': 'fake', 'score': 0.93},
+     ...]
+
+
+  Limits to expect: image models judge each frame alone, so they miss flicker and lip-sync
+  problems, and they often fail on fakes from newer generators. That is the main reason to
+  fine-tune later.
+
+
+  12.1 Choose the approach
+  Video deepfake detection usually works in two stages:
+
+     1. Face and frame analysis: extract frames (for example 1 to 5 per second), detect and
+        crop faces, classify each as real or fake with an image model.
+     2. Temporal analysis: look at how things change across frames (flicker, unnatural
+        blinking, lip sync mismatch). Aggregate frame scores, or use a video model.
+
+  Start simple: frame-level classifier + average of top scores. Improve later.
+
+
+  12.2 Open datasets
+  Many require you to fill a request form or accept a license. Check each license for
+  commercial use before building a paid product.
+
+         FaceForensics++ (real + several manipulation types; request form)
+         Celeb-DF v2 (high-quality celebrity deepfakes)
+
+
+                                                                                                 Page 11 of 19
+Deepfake Detection Web App: Complete Beginner Build Guide
+
+
+
+
+         DFDC (Facebook/Meta Deepfake Detection Challenge, very large)
+         DeeperForensics-1.0
+         WildDeepfake (collected from the internet)
+         FakeAVCeleb (audio and video fakes)
+         DF40 / newer benchmark datasets with modern generators (search Hugging Face
+         and Papers with Code for the latest)
+         Real videos: you also need plenty of normal real videos (for example from Kinetics or
+         similar open datasets) to reduce false alarms.
+
+  Because generators evolve quickly, also create your own fakes with open-source tools
+  (for example open video diffusion models and face-swap tools) and add them to training.
+  This matters more than any single dataset.
+
+
+  12.3 Prepare the data
+     1. Download datasets into training/data/raw .
+     2. Write a script to extract frames with FFmpeg or OpenCV.
+     3. Detect and crop faces (open-source: MediaPipe, RetinaFace, or YOLO-face).
+     4. Save crops into folders labeled real/ and fake/ .
+     5. Split by video, not by frame: 70% train, 15% validation, 15% test. Frames from the
+         same video must never appear in two splits, or your accuracy will look fake-good (data
+         leakage).
+     6. Balance classes (similar number of real and fake) or use class weights.
+     7. Apply augmentation: compression, blur, brightness, resize. Real-world videos are
+        compressed (WhatsApp, TikTok), and models that never saw compression fail badly.
+
+
+  12.4 Pick a starting model (all open source)
+         EfficientNet-B4 (classic and strong for deepfakes, light enough)
+         Xception (used in FaceForensics++ benchmarks)
+         Vision Transformer (ViT) / DINOv2 / CLIP backbones: modern, generalize better to
+         unseen fakes
+         VideoMAE or TimeSformer for true video models (heavier)
+
+  Recommended first choice: fine-tune a CLIP or DINOv2 ViT backbone with a small
+  classification head, because research shows these generalize better to new fake types
+  than older CNNs. Keep EfficientNet-B4 as a fast baseline.
+
+
+
+
+                                                                                         Page 12 of 19
+Deepfake Detection Web App: Complete Beginner Build Guide
+
+
+
+
+  12.5 Training steps (what actually happens)
+  Do this step only if the pretrained model is not accurate enough on your benchmark. Run
+  it on Kaggle or Colab, not on your laptop (2 GB VRAM is too small). Save the result as
+   safetensors files, download them, and score locally. You can also push them to a private
+  Hugging Face repo and download from there.
+
+     1. Create a Python virtual environment, install torch , torchvision , transformers ,
+          timm , opencv-python , scikit-learn , mlflow .
+     2. Write a PyTorch Dataset that loads a face crop and its label.
+     3. Load the pretrained model, replace the last layer with 2 outputs (real, fake).
+     4. Settings to begin with: learning rate 1e-4 (head) / 1e-5 (backbone), batch size 32 (lower
+         if GPU memory errors), 10 to 20 epochs, AdamW optimizer, cross-entropy loss, mixed
+         precision (fp16) to save memory.
+     5. After every epoch, evaluate on the validation set. Save the best model.
+     6. Log everything in MLflow: loss curves, AUC, settings.
+     7. Test once on the held-out test set at the end.
+     8. Cross-dataset test: train on FaceForensics++, test on Celeb-DF. If accuracy collapses,
+         you are overfitting. Add more varied data and augmentation.
+
+  OpenCode can write all these scripts. Prompt it with: "Write a PyTorch training script that
+  fine-tunes a timm EfficientNet-B4 on folders train/real and train/fake, with validation
+  AUC, mixed precision, and MLflow logging."
+
+
+  12.6 Turning model output into the 0 to 100 score
+         The model outputs a probability that each frame is fake.
+         Video score = weighted combination: mean of the top 30% most suspicious frames,
+         blended with the temporal and audio scores.
+         Calibrate the score (temperature scaling or isotonic regression on validation data) so
+         that "80" really means roughly 80% of such videos are fake.
+         Verdict bands: 0 to 30 likely real, 30 to 70 uncertain, 70 to 100 likely fake. Tune using
+         validation results.
+
+
+  12.7 Audio and lip-sync (phase 2 of the model)
+  Add later: open-source audio anti-spoofing models (AASIST, wav2vec2-based detectors)
+  and lip-sync mismatch detection (SyncNet). Combine with the visual score using a small
+  fusion model.
+
+
+                                                                                               Page 13 of 19
+Deepfake Detection Web App: Complete Beginner Build Guide
+
+
+
+
+  12.8 Where does an LLM fit?
+  Use an open-source LLM (Qwen, Llama, Mistral) served locally with Ollama or vLLM to:
+
+         Turn technical results into a human-readable explanation for the report.
+         Power the fake-information detector later (fact-checking text claims).
+         Answer support questions in a help chatbot.
+
+  Training an LLM from scratch is unnecessary and extremely expensive. If you later fine-
+  tune one, use LoRA/QLoRA with the peft and trl libraries.
+
+
+  13. Phase 7: ML Inference Service (Python)
+  A FastAPI app with this pipeline:
+
+     1. Receive job (video path, job id) from the queue.
+     2. Download video from MinIO.
+     3. Validate with FFprobe (duration, codec, resolution).
+     4. Extract frames and faces.
+     5. Run the model in batches on GPU.
+     6. Compute per-frame scores, temporal score, final score.
+     7. Generate heatmaps (Grad-CAM) showing which face regions looked fake.
+     8. Save results to the database and mark job done.
+     9. Delete temporary files.
+
+  Endpoints: GET /health , POST /analyze , GET /models . Keep it private (not exposed to
+  the internet); only the Node API calls it.
+
+  Performance tips: process one frame every 0.5 s, cap video length at first (for example 2
+  minutes), use ONNX Runtime or TensorRT later to speed up.
+
+  Make the model swappable. This lets you replace the pretrained model with your own
+  later without touching the rest of the app:
+
+         Put the model behind one class ( ModelBackend ) with one function,
+          predict(frames) , that returns scores. The queue, database and result page never
+         know which model is behind it.
+         Keep the model id or local path in .env (for example MODEL_ID ), not in code.
+         Save the model name and version in the modelVersion field of every Analysis row.
+         Scores from different models are not comparable.
+
+
+
+                                                                                         Page 14 of 19
+Deepfake Detection Web App: Complete Beginner Build Guide
+
+
+
+
+         Before switching, run old and new models on the benchmark, recalibrate the new one,
+         and ideally run both side by side for a while (shadow mode). Then activate it from the
+         admin panel's model management page.
+
+
+  14. Phase 8: Frontend Build Steps
+     1. pnpm create next-app with TypeScript and Tailwind.
+     2. Install shadcn/ui, React Query (data fetching), Zod (validation), Recharts (charts).
+     3. Build the layout: navbar, footer, theme.
+     4. Build public pages (section 8.1).
+     5. Build auth pages and connect them to the API.
+     6. Build dashboard and upload flow (use resumable upload like tus for large files).
+     7. Build result page with gauge and timeline.
+     8. Build admin pages.
+     9. Add responsive design, accessibility (keyboard and screen reader), and SEO
+        metadata.
+
+
+
+  15. Phase 9: Docker and Local Run
+  Create infra/docker-compose.yml with services: web, api, ml-worker, postgres, redis,
+  minio, mlflow. One command, docker compose up , should start the whole system. Use
+  .env files for secrets and never commit them.
+
+
+
+  16. Phase 10: Security (Very Important for This Product)
+  As a cybersecurity professional, treat this as a security product from day one.
+
+         Uploaded videos are untrusted input. Process them in an isolated container with no
+         internet access, limited CPU/memory, and timeouts. Malicious media files can exploit
+         decoders like FFmpeg, so keep it updated.
+         Validate and limit uploads, use random storage names, and virus-scan with ClamAV.
+         OWASP Top 10 checklist: injection, broken access control, XSS, CSRF, SSRF, insecure
+         deserialization.
+         Security headers (CSP, HSTS), HTTPS everywhere, secrets in a vault or encrypted env.
+         Rate limiting and abuse protection on all endpoints.
+
+
+
+
+                                                                                           Page 15 of 19
+Deepfake Detection Web App: Complete Beginner Build Guide
+
+
+
+
+         Encrypt data at rest, define retention (auto-delete videos after N days), and support
+         user deletion.
+         Audit logs for admin actions.
+         Dependency scanning: Trivy, npm audit , pip-audit , Dependabot.
+         Protect against adversarial attacks: attackers can modify fake videos to fool the
+         detector. Test with compression, noise, and re-encoding; retrain on failures.
+
+
+  17. Phase 11: Privacy and Legal
+  Videos can contain faces, which are biometric and personal data. Write a clear privacy
+  policy, get consent, define retention, and check rules like GDPR. Check each dataset
+  license before commercial use. Add a disclaimer that results are probabilistic. Get legal
+  advice before selling to enterprises.
+
+
+  18. Phase 12: Testing
+         Unit tests: Jest (Node), pytest (Python).
+         API tests: Supertest or Postman/Newman.
+         End-to-end tests: Playwright for login, upload, result flow.
+         Model tests: a fixed benchmark set of real and fake videos run after every model
+         change. Track AUC, false positive rate, false negative rate.
+         Load tests: k6 or Locust for many simultaneous uploads.
+         Security tests: OWASP ZAP scan.
+
+
+  19. Phase 13: Deployment
+     1. Rent a VPS (Hetzner, DigitalOcean, or your own server). GPU server for the ML
+         worker.
+     2. Install Docker, set up Caddy or Nginx with free Let's Encrypt HTTPS.
+     3. Deploy with Docker Compose (later Kubernetes/k3s if you scale).
+     4. Automatic backups of PostgreSQL and MinIO.
+     5. Monitoring with Prometheus + Grafana and error tracking with self-hosted Sentry or
+        GlitchTip.
+     6. CI/CD: on each push, run tests, build images, deploy.
+
+
+
+
+                                                                                         Page 16 of 19
+Deepfake Detection Web App: Complete Beginner Build Guide
+
+
+
+
+  20. Step-by-Step Timeline
+
+     Week                Goal                                        Done when
+
+     1                   Install tools, repo, AGENTS.md; shortlist   Repo runs; a detector scores a test
+                         2 or 3 pretrained detectors                 image
+
+     2                   Database schema, auth backend               Register and login work
+
+     3                   Public pages and navbar                     Home, pricing, contact, legal live
+                                                                     locally
+
+     4                   Dashboard, upload, queue                    Video upload creates a job
+
+     5                   Roles and admin panel                       Admin can manage users
+
+     6                   Benchmark set (about 100 videos) and        Video in, score out via API
+                         ML service pipeline
+
+     7                   Integrate, result page, PDF report          End-to-end demo works
+
+     8                   Calibration, security, testing              Checklist passed
+
+     9                   Deploy, beta users                          Public beta
+
+     10                  Optional: fine-tune on Kaggle or Colab      New model beats the old one on the
+     onward              and swap the model                          benchmark
+
+
+
+
+  21. Ready-to-Use OpenCode Prompts (in order)
+     1. "Read AGENTS.md. Create the monorepo structure with apps/web (Next.js +
+        TypeScript + Tailwind), apps/api (NestJS), services/ml (FastAPI), and infra/docker-
+        compose.yml with postgres, redis, minio."
+     2. "In apps/api, add Prisma with the schema for User, ApiKey, Video, Analysis,
+        ContactMessage, AuditLog, ModelVersion. Create the first migration."
+     3. "Implement register, login, logout, email verification and password reset with Argon2
+        and HTTP-only cookies. Add rate limiting."
+     4. "Add RBAC guards for roles USER, ADMIN, SUPER_ADMIN, with ownership checks on
+        videos and analyses."
+     5. "In apps/web, build the navbar, footer, and Home page with hero, features, how-it-
+        works, FAQ. Use shadcn/ui and support dark mode."
+
+
+
+                                                                                                          Page 17 of 19
+Deepfake Detection Web App: Complete Beginner Build Guide
+
+
+
+
+     6. "Build Pricing, Contact (saves to API), Docs, About, and legal pages."
+     7. "Build the dashboard layout with sidebar, upload page with drag and drop, and history
+        table."
+     8. "Build the BullMQ job queue: API pushes analysis jobs, ML worker consumes them and
+        writes results."
+     9. "Build the result page with score gauge, frame timeline chart, and flagged frame
+        thumbnails."
+   10. "Build the admin panel: stats, users, jobs, messages, model versions, audit logs."
+   11. "In training/, write scripts to extract frames and crop faces locally, and a Kaggle or
+       Colab notebook that fine-tunes a timm EfficientNet-B0 classifier with MLflow logging
+       (only needed if the pretrained model is not accurate enough)."
+   12. "In services/ml, create a ModelBackend interface with a predict(frames) function,
+       load a pretrained Hugging Face image-classification model named in MODEL_ID in
+       .env (safetensors, local files only), implement the analysis pipeline, score aggregation,
+         calibration, and Grad-CAM heatmaps."
+   13. "Write Playwright end-to-end tests for register, upload, and result flow, plus pytest
+       tests for the pipeline."
+   14. "Harden the system: security headers, upload validation, sandboxed processing, and
+       dependency scans."
+
+  After each prompt: run, test, review the diff, commit.
+
+
+  22. Future Phases
+
+  AI image detection
+  Reuse the same architecture. Train an image classifier on datasets of real photos vs AI
+  images (for example from open collections of Stable Diffusion, Midjourney-style, and real
+  photo sets). Add metadata and C2PA/Content Credentials checks. Add an Image page
+  and API endpoint.
+
+
+  Fake information detection
+  Text claims pipeline: extract claim, retrieve evidence from trusted sources (open search +
+  vector database like Qdrant or pgvector), have an open-source LLM compare claim and
+  evidence, and output a credibility score with sources. Datasets include LIAR, FEVER, and
+  FakeNewsNet. Always show sources so users can verify.
+
+
+
+                                                                                            Page 18 of 19
+Deepfake Detection Web App: Complete Beginner Build Guide
+
+
+
+
+  Other growth ideas
+  Browser extension, public API with billing, team workspaces, webhook notifications,
+  multi-language interface, mobile app.
+
+
+  23. Common Beginner Mistakes
+         Splitting data by frame instead of by video (fake high accuracy).
+         Training only on one dataset and claiming general accuracy.
+         Ignoring video compression in training data.
+         Skipping calibration, so scores are meaningless.
+         Letting OpenCode write huge changes without review.
+         Exposing the ML service or storage publicly.
+         Forgetting dataset licenses.
+         Overpromising accuracy in marketing.
+
+
+  24. Learning Resources (all free)
+         fast.ai Practical Deep Learning course
+         PyTorch official tutorials
+         Hugging Face courses and documentation
+         Andrej Karpathy's neural network videos on YouTube
+         Papers with Code (search "deepfake detection") for current best methods
+         OWASP documentation for web security
+         Next.js, NestJS, and Prisma official docs
+
+
+  25. Your First Three Actions Today
+     1. Create the repo and write AGENTS.md using sections 3, 4 and 7.3.
+     2. Run the first two OpenCode prompts from section 21.
+     3. Shortlist 2 or 3 pretrained detectors on Hugging Face, check their licenses and model
+         cards, and test one on a few face images on your laptop.
+     4. Later, only if you decide to fine-tune: request access to FaceForensics++ and Celeb-
+        DF (approval can take days) and create a free Kaggle or Colab account.
+
+  Good luck. Build in small steps, test constantly, and keep the score honest.
+
+
+                                                                                        Page 19 of 19
+
