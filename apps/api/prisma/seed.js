@@ -36,7 +36,8 @@ async function main() {
   });
 
   const backend = (process.env.MODEL_BACKEND || "mock").toLowerCase() === "hf" ? "HF" : "MOCK";
-  const modelId = process.env.MODEL_ID || "dima806/deepfake_vs_real_image_detection";
+  const modelId =
+    process.env.MODEL_ID || "gend:HoopitAI/video-deepfake-detection-GenD_CLIP_L_14_FF";
   const existingModel = await prisma.modelVersion.findFirst({ where: { isActive: true } });
 
   if (!existingModel) {

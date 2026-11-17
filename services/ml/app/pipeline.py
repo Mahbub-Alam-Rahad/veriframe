@@ -40,6 +40,15 @@ class AnalysisPipeline:
             max(1, int(getattr(settings, "max_concurrent_analyses", 1)))
         )
 
+    def _use_full_frames(self, backend: object) -> bool:
+        """Resolve the configured input mode against the backend's preference."""
+        mode = getattr(self.settings, "model_input_mode", "auto")
+        if mode == "full-frame":
+            return True
+        if mode == "face-crop":
+            return False
+        return bool(getattr(backend, "prefers_full_frame", False))
+
     def analyze(self, request: AnalyzeRequest) -> dict:
         started = time.perf_counter()
         backend, warnings = self.registry.get(request.backend, request.model_id)
@@ -90,20 +99,31 @@ class AnalysisPipeline:
                 crops: list[Image.Image] = []
                 frame_details: list[dict] = []
                 faces_detected = 0
+                full_frame_mode = self._use_full_frames(backend)
 
                 for index, frame_path in enumerate(frame_paths):
-                    face = extract_face_crop(
-                        frame_path, max_dimension=self.settings.max_model_dimension
-                    )
-                    if face.face_detected:
-                        faces_detected += 1
-                    crops.append(face.image)
+                    if full_frame_mode:
+                        # This checkpoint was trained on full 224x224 frames; a
+                        # tight face crop is a different input distribution.
+                        with Image.open(frame_path) as opened:
+                            crops.append(opened.convert("RGB"))
+                        face_detected = False
+                        box = None
+                    else:
+                        face = extract_face_crop(
+                            frame_path, max_dimension=self.settings.max_model_dimension
+                        )
+                        if face.face_detected:
+                            faces_detected += 1
+                        crops.append(face.image)
+                        face_detected = face.face_detected
+                        box = list(face.box) if face.box else None
                     frame_details.append(
                         {
                             "index": index,
                             "timestampSeconds": round((index + 0.5) / effective_fps, 3),
-                            "faceDetected": face.face_detected,
-                            "box": list(face.box) if face.box else None,
+                            "faceDetected": face_detected,
+                            "box": box,
                         }
                     )
 
@@ -114,21 +134,29 @@ class AnalysisPipeline:
                 for detail, probability in zip(frame_details, probabilities, strict=True):
                     detail["score"] = round(float(probability), 6)
 
+                effective_temperature = (
+                    request.calibration_temperature
+                    if request.calibration_temperature > 0
+                    else self.settings.calibration_temperature
+                )
+                top_fraction = float(getattr(backend, "top_fraction", 0.30))
+                logit_bias = float(getattr(backend, "logit_bias", 0.0))
                 result = aggregate_scores(
                     probabilities,
-                    temperature=request.calibration_temperature
-                    if request.calibration_temperature > 0
-                    else self.settings.calibration_temperature,
+                    temperature=effective_temperature,
+                    top_fraction=top_fraction,
+                    logit_bias=logit_bias,
                 )
 
-                if faces_detected == 0:
-                    warnings.append(
-                        "No faces were detected; the classifier scored center crops of each frame."
-                    )
-                elif faces_detected < len(frame_paths) / 2:
-                    warnings.append(
-                        "Faces were detected in fewer than half of the sampled frames."
-                    )
+                if not full_frame_mode:
+                    if faces_detected == 0:
+                        warnings.append(
+                            "No faces were detected; the classifier scored center crops of each frame."
+                        )
+                    elif faces_detected < len(frame_paths) / 2:
+                        warnings.append(
+                            "Faces were detected in fewer than half of the sampled frames."
+                        )
 
                 flagged = self._build_evidence(
                     frame_paths,
@@ -156,13 +184,19 @@ class AnalysisPipeline:
                         "modelId": backend_info.get("modelId", request.model_id),
                         "mock": bool(backend_info.get("mock", backend.mock)),
                         "device": str(backend_info.get("device", self.settings.model_device)),
+                        "inputMode": "full-frame" if full_frame_mode else "face-crop",
                         "sampleFps": round(effective_fps, 4),
                         "durationSeconds": round(metadata.duration_seconds, 3),
                         "width": metadata.width,
                         "height": metadata.height,
                         "processingMs": elapsed_ms,
-                        "calibrationTemperature": request.calibration_temperature,
-                        "aggregation": "mean of top 30% frames, calibrated, blended with temporal instability",
+                        "calibrationTemperature": effective_temperature,
+                        "topFraction": round(top_fraction, 3),
+                        "logitBias": round(logit_bias, 3),
+                        "aggregation": (
+                            f"mean of top {top_fraction:.0%} frames, calibrated "
+                            f"(bias {logit_bias:+.2f}), blended with temporal instability"
+                        ),
                         "visualScore": result.visual_score,
                         "disclaimer": DISCLAIMER,
                         "warnings": warnings,

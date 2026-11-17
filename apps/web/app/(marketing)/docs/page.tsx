@@ -93,10 +93,10 @@ const RESPONSE = `{
     ],
     "details": {
       "backend": "hf",
-      "modelId": "dima806/deepfake_vs_real_image_detection",
+      "modelId": "gend:HoopitAI/video-deepfake-detection-GenD_CLIP_L_14_FF",
       "mock": false,
       "sampleFps": 1,
-      "calibrationTemperature": 1,
+      "calibrationTemperature": 0.5,
       "warnings": []
     }
   }

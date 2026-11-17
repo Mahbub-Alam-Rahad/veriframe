@@ -282,13 +282,29 @@ export class VideosService {
     });
     if (!owner) throw new NotFoundException("User not found");
 
-    const jobId = await this.queue.enqueue(
-      { videoId: video.id, userId, storageKey: video.storageKey },
-      owner.plan,
-    );
+    // Set QUEUED before enqueueing so the processor never sees the old FAILED
+    // row and skips the retry as a duplicate.
+    const previous = { status: video.status, error: video.error };
     await this.prisma.video.update({
       where: { id: video.id },
-      data: { status: VideoStatus.QUEUED, error: null, jobId },
+      data: { status: VideoStatus.QUEUED, error: null, jobId: null },
+    });
+
+    let jobId: string;
+    try {
+      jobId = await this.queue.enqueue(
+        { videoId: video.id, userId, storageKey: video.storageKey },
+        owner.plan,
+      );
+    } catch (error) {
+      await this.prisma.video
+        .update({ where: { id: video.id }, data: previous })
+        .catch(() => undefined);
+      throw error;
+    }
+    await this.prisma.video.update({
+      where: { id: video.id },
+      data: { jobId },
     });
     return { message: "Analysis queued again", jobId };
   }

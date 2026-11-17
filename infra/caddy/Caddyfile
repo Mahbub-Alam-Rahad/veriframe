@@ -3,11 +3,12 @@
 	admin off
 }
 
-# Local default is plain HTTP on port 3000: http://localhost:3000
-# For a public deployment set SITE_ADDRESS to a DNS name (for example
-# detect.example.com). Caddy will then obtain and renew a Let's Encrypt
-# certificate automatically, provided ports 80 and 443 are reachable.
-{$SITE_ADDRESS:http://localhost:3000} {
+# Local default is plain HTTP on all interfaces on port 3000 so both
+# localhost and private-LAN Host headers are served. For a public deployment
+# set SITE_ADDRESS to a DNS name (for example detect.example.com). Caddy will
+# then obtain and renew a Let's Encrypt certificate automatically, provided
+# ports 80 and 443 are reachable.
+{$SITE_ADDRESS::3000} {
 	encode zstd gzip
 
 	header {

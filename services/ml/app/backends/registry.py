@@ -4,7 +4,15 @@ import logging
 import threading
 
 from ..config import Settings
-from .base import BackendUnavailable, HfBackend, MockBackend, ModelBackend
+from .base import (
+    TORCHVISION_MODEL_PREFIX,
+    BackendUnavailable,
+    HfBackend,
+    MockBackend,
+    ModelBackend,
+    TorchvisionEfficientNetBackend,
+)
+from .gend import GEND_MODEL_PREFIX, GenDBackend
 
 logger = logging.getLogger(__name__)
 
@@ -16,12 +24,45 @@ class BackendRegistry:
         self.settings = settings
         self._lock = threading.Lock()
         self._hf: dict[str, HfBackend] = {}
+        self._torchvision: dict[str, TorchvisionEfficientNetBackend] = {}
+        self._gend: dict[str, GenDBackend] = {}
         self._mock = MockBackend()
 
     def mock_backend(self) -> ModelBackend:
         return self._mock
 
-    def hf_backend(self, model_id: str) -> HfBackend:
+    def _torchvision_backend(self, model_id: str) -> TorchvisionEfficientNetBackend:
+        with self._lock:
+            if model_id in self._torchvision:
+                return self._torchvision[model_id]
+            backend = TorchvisionEfficientNetBackend(
+                model_id,
+                device=self.settings.model_device,
+                cache_dir=self.settings.hf_home,
+                fake_label_index=self.settings.fake_label_index,
+                offline=self.settings.hf_offline,
+            )
+            self._torchvision[model_id] = backend
+            return backend
+
+    def _gend_backend(self, model_id: str) -> GenDBackend:
+        with self._lock:
+            if model_id in self._gend:
+                return self._gend[model_id]
+            backend = GenDBackend(
+                model_id,
+                device=self.settings.model_device,
+                cache_dir=self.settings.hf_home,
+                offline=self.settings.hf_offline,
+            )
+            self._gend[model_id] = backend
+            return backend
+
+    def hf_backend(self, model_id: str) -> ModelBackend:
+        if model_id.startswith(TORCHVISION_MODEL_PREFIX):
+            return self._torchvision_backend(model_id)
+        if model_id.startswith(GEND_MODEL_PREFIX):
+            return self._gend_backend(model_id)
         with self._lock:
             if model_id in self._hf:
                 return self._hf[model_id]

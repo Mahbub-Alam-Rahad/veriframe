@@ -31,11 +31,15 @@ class Settings(BaseSettings):
         default="mock", validation_alias="MODEL_BACKEND"
     )
     model_id: str = Field(
-        default="dima806/deepfake_vs_real_image_detection", validation_alias="MODEL_ID"
+        default="gend:HoopitAI/video-deepfake-detection-GenD_CLIP_L_14_FF",
+        validation_alias="MODEL_ID",
     )
     model_device: str = Field(default="cpu", validation_alias="MODEL_DEVICE")
+    model_input_mode: Literal["auto", "full-frame", "face-crop"] = Field(
+        default="face-crop", validation_alias="MODEL_INPUT_MODE"
+    )
     calibration_temperature: float = Field(
-        default=1.0, validation_alias="MODEL_CALIBRATION_TEMPERATURE"
+        default=0.5, validation_alias="MODEL_CALIBRATION_TEMPERATURE"
     )
     fake_label_index: int = Field(default=1, validation_alias="FAKE_LABEL_INDEX")
     allow_mock_fallback: bool = Field(default=True, validation_alias="ALLOW_MOCK_FALLBACK")

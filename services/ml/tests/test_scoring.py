@@ -44,6 +44,22 @@ def test_temperature_pulls_probability_towards_half() -> None:
     assert math.isclose(calibrate_probability(0.5, 5.0), 0.5, abs_tol=1e-9)
 
 
+def test_positive_logit_bias_raises_fake_probability() -> None:
+    uncalibrated = calibrate_probability(0.42, 0.5)
+    calibrated = calibrate_probability(0.42, 0.5, logit_bias=1.4)
+    assert calibrated > uncalibrated
+    assert aggregate_scores([0.42] * 4, temperature=0.5).fake_score < aggregate_scores(
+        [0.42] * 4, temperature=0.5, logit_bias=1.4
+    ).fake_score
+
+
+def test_top_fraction_is_configurable() -> None:
+    scores = [0.05] * 7 + [0.8, 0.9, 0.95]
+    narrow = aggregate_scores(scores, top_fraction=0.05, temporal_weight=0.0)
+    wide = aggregate_scores(scores, top_fraction=0.30, temporal_weight=0.0)
+    assert narrow.visual_score > wide.visual_score
+
+
 def test_temporal_anomaly_requires_enough_frames() -> None:
     assert temporal_anomaly([0.1, 0.9]) == 0.0
     assert temporal_anomaly([0.5, 0.5, 0.5, 0.5]) == 0.0

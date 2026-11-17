@@ -131,17 +131,27 @@ The stack starts in mock mode. To run real inference:
 
 ```dotenv
 MODEL_BACKEND=hf
-MODEL_ID=dima806/deepfake_vs_real_image_detection
+MODEL_ID=gend:HoopitAI/video-deepfake-detection-GenD_CLIP_L_14_FF
+MODEL_INPUT_MODE=face-crop
+MODEL_CALIBRATION_TEMPERATURE=0.5
 MODEL_DEVICE=cpu
 ALLOW_MOCK_FALLBACK=false
 ```
+
+The bundled GenD checkpoint expects padded face crops and ships with an explicit local logit-bias
+calibration; both are part of its evaluation (see [MODEL.md](docs/MODEL.md)). Do not switch it to
+`full-frame` without re-evaluating.
 
 Then rebuild/restart the ML service and confirm the health endpoint reports the HF backend:
 
 ```bash
 docker compose --env-file .env -f infra/docker-compose.yml up -d --build ml worker
+bash scripts/activate-model.sh   # register/activate MODEL_ID in the admin registry
 curl -s http://localhost:3000/api/v1/health | jq
 ```
+
+Changing `.env` is not enough on an existing install: the worker uses the active **ModelVersion**
+row, so re-run `scripts/activate-model.sh` after changing `MODEL_ID` or the calibration temperature.
 
 Model output still needs evaluation on representative data for your use case. See
 [`docs/MODEL.md`](docs/MODEL.md) for calibration, model swapping and evaluation guidance.

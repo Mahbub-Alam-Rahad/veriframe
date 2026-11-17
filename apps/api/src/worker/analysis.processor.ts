@@ -47,8 +47,10 @@ export class AnalysisProcessor extends WorkerHost {
           version: "env",
           backend:
             (process.env.MODEL_BACKEND ?? "mock").toLowerCase() === "hf" ? "HF" : "MOCK",
-          modelId: process.env.MODEL_ID ?? "dima806/deepfake_vs_real_image_detection",
-          calibrationTemperature: Number(process.env.MODEL_CALIBRATION_TEMPERATURE ?? 1),
+          modelId:
+            process.env.MODEL_ID ??
+            "gend:HoopitAI/video-deepfake-detection-GenD_CLIP_L_14_FF",
+          calibrationTemperature: Number(process.env.MODEL_CALIBRATION_TEMPERATURE ?? 0.5),
         };
 
       const plan = getPlan(video.user.plan);

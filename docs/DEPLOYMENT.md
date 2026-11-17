@@ -62,8 +62,12 @@ model. Sign in at the public URL and change the bootstrap password immediately.
 Caddy is the only public entry point. `infra/caddy/Caddyfile` routes `/api/*` to the API and all
 other traffic to the web app, and applies baseline security headers.
 
-- **Local HTTP:** `SITE_ADDRESS=http://localhost:3000` serves plain HTTP on port 3000 (mapped by
-  Compose). Use this for a workstation or a private LAN.
+- **Local HTTP:** `SITE_ADDRESS=:3000` serves plain HTTP on all container interfaces on port 3000
+  (mapped by Compose), so both `localhost` and private-LAN Host headers are accepted.
+- **Private LAN clients:** set `PUBLIC_WEB_URL`/`NEXT_PUBLIC_APP_URL` to `http://<host-lan-ip>:3000`,
+  add that origin to `WEB_ORIGIN`, set `S3_PUBLIC_ENDPOINT=http://<host-lan-ip>:9000`, and set
+  `MINIO_BIND=0.0.0.0`. Rebuild the web image because `NEXT_PUBLIC_*` values are baked into the
+  bundle. This exposes MinIO to the LAN; keep credentials strong and the bucket private.
 - **Automatic HTTPS:** set `SITE_ADDRESS` to a DNS name (no scheme), provide `ACME_EMAIL`, and
   ensure 80/443 are reachable. Caddy will obtain and renew certificates via ACME. Set
   `COOKIE_SECURE=true` and align `PUBLIC_WEB_URL`/`WEB_ORIGIN`.
@@ -129,7 +133,9 @@ the request path.
 
 ```dotenv
 MODEL_BACKEND=hf
-MODEL_ID=dima806/deepfake_vs_real_image_detection
+MODEL_ID=gend:HoopitAI/video-deepfake-detection-GenD_CLIP_L_14_FF
+MODEL_INPUT_MODE=face-crop
+MODEL_CALIBRATION_TEMPERATURE=0.5
 MODEL_DEVICE=cpu
 ALLOW_MOCK_FALLBACK=false
 ```

@@ -304,13 +304,29 @@ export class AdminService {
       throw new BadRequestException("This video is already processing");
     }
 
-    const jobId = await this.queue.enqueue(
-      { videoId: video.id, userId: video.userId, storageKey: video.storageKey },
-      video.user.plan,
-    );
+    // Mark QUEUED before enqueueing. A fast worker can otherwise observe the
+    // old DONE row and skip the job as a duplicate before this update lands.
+    const previous = { status: video.status, error: video.error };
     await this.prisma.video.update({
       where: { id: video.id },
-      data: { status: VideoStatus.QUEUED, error: null, jobId },
+      data: { status: VideoStatus.QUEUED, error: null, jobId: null },
+    });
+
+    let jobId: string;
+    try {
+      jobId = await this.queue.enqueue(
+        { videoId: video.id, userId: video.userId, storageKey: video.storageKey },
+        video.user.plan,
+      );
+    } catch (error) {
+      await this.prisma.video
+        .update({ where: { id: video.id }, data: previous })
+        .catch(() => undefined);
+      throw error;
+    }
+    await this.prisma.video.update({
+      where: { id: video.id },
+      data: { jobId },
     });
 
     await this.audit.record({

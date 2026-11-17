@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
+from threading import Lock
 
 from PIL import Image
 
@@ -10,12 +11,38 @@ class BackendUnavailable(RuntimeError):
     pass
 
 
+# Model IDs with this prefix are raw torchvision state dicts hosted on the Hub,
+# e.g. tv-efficientnet:Sujithg684/efficientnet@efficientnet_b0_ffpp_c23.pth
+TORCHVISION_MODEL_PREFIX = "tv-efficientnet:"
+
+
+def parse_torchvision_model_id(model_id: str) -> tuple[str, str]:
+    """Split ``tv-efficientnet:<repo>@<weights-file>`` into repo and filename."""
+    if not model_id.startswith(TORCHVISION_MODEL_PREFIX):
+        raise BackendUnavailable(f"Not a torchvision EfficientNet model id: {model_id}")
+    spec = model_id[len(TORCHVISION_MODEL_PREFIX) :]
+    repo_id, separator, filename = spec.partition("@")
+    if not separator or not repo_id or not filename or "/" not in repo_id:
+        raise BackendUnavailable(
+            "Expected tv-efficientnet:<owner>/<repo>@<weights-file> (for example "
+            "tv-efficientnet:Sujithg684/efficientnet@efficientnet_b0_ffpp_c23.pth)"
+        )
+    return repo_id, filename
+
+
 class ModelBackend(ABC):
     """One interface for every detector. Surrounding code never changes when a
     model is swapped."""
 
     name: str = "base"
     mock: bool = False
+    # Frame-level detectors trained on full video frames must not receive face crops.
+    prefers_full_frame: bool = False
+    # Backend-specific aggregation defaults. A model that was calibrated with a
+    # small top-frame window or a logit offset can declare it here so swapping
+    # models does not silently reuse another checkpoint's decision rule.
+    top_fraction: float = 0.30
+    logit_bias: float = 0.0
 
     @abstractmethod
     def predict(self, images: list[Image.Image]) -> list[float]:
@@ -94,11 +121,109 @@ def _box_blur(array):
     return stacked.mean(axis=0)
 
 
+class TorchvisionEfficientNetBackend(ModelBackend):
+    """
+    torchvision EfficientNet-B0 checkpoint distributed as a raw ``.pth`` file.
+
+    Some published deepfake detectors are torchvision state dicts rather than
+    transformers checkpoints. Re-encoding their weights into a transformers
+    EfficientNet changes padding and batch-norm behaviour, so this loader uses
+    the publisher's reference architecture instead. Weights are still downloaded
+    once from the Hub into the local model cache; no hosted inference is used.
+    """
+
+    name = "hf"
+    mock = False
+    # The FF++ checkpoint was trained on full 224x224 frames, not face crops.
+    prefers_full_frame = True
+
+    def __init__(
+        self,
+        model_id: str,
+        *,
+        device: str = "cpu",
+        cache_dir: str = "/models/hf-cache",
+        fake_label_index: int = 1,
+        offline: bool = False,
+    ) -> None:
+        repo_id, filename = parse_torchvision_model_id(model_id)
+
+        try:
+            import torch
+            import torchvision.models as torchvision_models
+            from huggingface_hub import hf_hub_download
+            from torch import nn
+            from torchvision.transforms import Compose, Resize, ToTensor
+        except ImportError as exc:  # pragma: no cover - exercised in Docker
+            raise BackendUnavailable(
+                "torch/torchvision are not installed; install the CPU wheels from the image"
+            ) from exc
+
+        try:
+            weights_path = hf_hub_download(
+                repo_id=repo_id,
+                filename=filename,
+                cache_dir=cache_dir,
+                local_files_only=offline,
+            )
+            state_dict = torch.load(weights_path, map_location="cpu", weights_only=True)
+            model = torchvision_models.efficientnet_b0(weights=None)
+            classifier = model.classifier[1]
+            model.classifier[1] = nn.Linear(classifier.in_features, 2)
+            model.load_state_dict(state_dict)
+        except Exception as exc:  # pragma: no cover - network/model dependent
+            raise BackendUnavailable(f"Could not load torchvision model {model_id}: {exc}") from exc
+
+        resolved_device = device
+        if resolved_device == "auto":
+            resolved_device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        self._torch = torch
+        self.model = model.to(resolved_device).eval()
+        self.device = resolved_device
+        self.model_id = model_id
+        # The FF++ checkpoint is trained as 0=real, 1=fake. Keep the configured
+        # index so operators can audit it via FAKE_LABEL_INDEX if it ever changes.
+        self.fake_index = fake_label_index if fake_label_index in (0, 1) else 1
+        self.transform = Compose([Resize((224, 224)), ToTensor()])
+        self._lock = Lock()
+
+    def describe(self) -> dict[str, str | bool]:
+        labels = {1 - self.fake_index: "real", self.fake_index: "fake"}
+        return {
+            "backend": self.name,
+            "mock": False,
+            "modelId": self.model_id,
+            "device": self.device,
+            "loader": "torchvision-efficientnet-b0",
+            "labels": str(labels),
+        }
+
+    def predict(self, images: list[Image.Image]) -> list[float]:
+        if not images:
+            return []
+
+        torch = self._torch
+        scores: list[float] = []
+        with self._lock:
+            for start in range(0, len(images), 8):
+                batch = images[start : start + 8]
+                tensors = torch.stack([self.transform(image.convert("RGB")) for image in batch])
+                tensors = tensors.to(self.device)
+                with torch.inference_mode():
+                    probabilities = torch.softmax(self.model(tensors), dim=-1).cpu().numpy()
+                scores.extend(float(row[self.fake_index]) for row in probabilities)
+        return scores
+
+
 class HfBackend(ModelBackend):
     """Hugging Face image classifier loaded locally (never the hosted API)."""
 
     name = "hf"
     mock = False
+    # Tested detectors in this repo score full frames better than Haar crops.
+    # MODEL_INPUT_MODE=face-crop can override this when a model requires crops.
+    prefers_full_frame = True
 
     def __init__(
         self,

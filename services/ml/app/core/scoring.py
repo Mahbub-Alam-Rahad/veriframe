@@ -35,12 +35,17 @@ def _std(values: list[float]) -> float:
     return math.sqrt(sum((value - mean) ** 2 for value in values) / len(values))
 
 
-def calibrate_probability(probability: float, temperature: float) -> float:
-    """Temperature-scale a probability in logit space."""
+def calibrate_probability(probability: float, temperature: float, logit_bias: float = 0.0) -> float:
+    """Temperature-scale a probability in logit space.
+
+    ``logit_bias`` shifts the decision boundary. It is used only by backends
+    that declare a locally calibrated offset; it is recorded in the analysis
+    details so a score can be audited against the model that produced it.
+    """
     temperature = max(0.1, float(temperature))
     p = _clamp(probability, 1e-6, 1 - 1e-6)
     logit = math.log(p / (1 - p))
-    scaled = logit / temperature
+    scaled = logit / temperature + float(logit_bias)
     return 1.0 / (1.0 + math.exp(-scaled))
 
 
@@ -67,6 +72,7 @@ def aggregate_scores(
     *,
     temperature: float = 1.0,
     top_fraction: float = 0.30,
+    logit_bias: float = 0.0,
     temporal_weight: float = 0.15,
 ) -> ScoreResult:
     if not frame_probabilities:
@@ -76,7 +82,7 @@ def aggregate_scores(
     ordered = sorted(probabilities, reverse=True)
     top_count = max(1, math.ceil(len(ordered) * _clamp(top_fraction, 0.05, 1.0)))
     visual_raw = _mean(ordered[:top_count])
-    visual = calibrate_probability(visual_raw, temperature)
+    visual = calibrate_probability(visual_raw, temperature, logit_bias)
 
     temporal = temporal_anomaly(probabilities)
     # Temporal instability can increase suspicion, but a stable clip is never
